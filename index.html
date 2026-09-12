@@ -496,7 +496,7 @@ el('btnDeletePlaylist').addEventListener('click', ()=>{
     return;
   }
   const p = currentPlaylist();
-  if(!confirm(`「${p.name}」を削除します`)) return;
+  if(!confirm(`「${p.name}」を削除します。よろしいですか？`)) return;
   playlists = playlists.filter(x=>x.id!==p.id);
   activeId = playlists[0].id;
   tracks = currentPlaylist().tracks;
@@ -704,16 +704,24 @@ function updatePlayIcon(playing){
 }
 
 function tickProgress(){
-  if(!ytPlayer || !playerReady) return;
+  if(!ytPlayer || !playerReady || currentPos < 0) return;
   const dur = ytPlayer.getDuration() || 0;
   const cur = ytPlayer.getCurrentTime() || 0;
   const track = tracks.find(t => order[currentPos] === t.id);
-  const effEnd = track && track.end ? Math.min(track.end, dur) : dur;
+  const effEnd = track && track.end != null ? Math.min(track.end, dur) : dur;
   const effStart = track ? (track.start||0) : 0;
   const span = Math.max(effEnd - effStart, 0.001);
   const pct = Math.min(100, Math.max(0, ((cur-effStart)/span)*100));
   el('barFill').style.width = pct + '%';
   el('counter').textContent = fmtTime(cur - effStart) + ' / ' + fmtTime(span);
+
+  // YouTube側のendSecondsだけだと効かないことがあるので、ここでも終了秒数を監視する
+  if(track && track.end != null && cur >= track.end - 0.15){
+    const state = ytPlayer.getPlayerState();
+    if(state === YT.PlayerState.PLAYING || state === YT.PlayerState.BUFFERING){
+      playNext();
+    }
+  }
 }
 
 function onPlayerReady(){
