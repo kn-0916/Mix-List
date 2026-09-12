@@ -391,7 +391,6 @@ function loadData(){
       playlists = data.playlists || [];
       activeId = data.activeId;
     }else{
-      // 旧バージョン(単一プレイリスト)からの引き継ぎ
       const legacy = localStorage.getItem('mixtape_tracks');
       const legacyTracks = legacy ? JSON.parse(legacy) : [];
       const id = genId();
@@ -481,7 +480,7 @@ el('btnDeletePlaylist').addEventListener('click', ()=>{
     return;
   }
   const p = currentPlaylist();
-  if(!confirm(`「${p.name}」を削除します。よろしいですか？`)) return;
+  if(!confirm(`「${p.name}」を削除します`)) return;
   playlists = playlists.filter(x=>x.id!==p.id);
   activeId = playlists[0].id;
   tracks = currentPlaylist().tracks;
@@ -636,7 +635,6 @@ function playNext(){
   if(order.length === 0) return;
   const wrapping = (currentPos + 1) >= order.length;
   if(wrapping && shuffleOn){
-    // 1周し終えたら、シャッフルを引き直して継続する
     rebuildOrder();
     currentPos = 0;
   }else{
