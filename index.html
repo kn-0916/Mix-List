@@ -251,7 +251,7 @@
     gap:4px;
   }
   .q-range input{
-    width:52px;
+    width:56px;
     background:var(--surface2);
     border:1px solid var(--line);
     color:var(--text);
@@ -259,6 +259,7 @@
     padding:3px 5px;
     font-size:12px;
     font-family:'Zen Kaku Gothic New',sans-serif;
+    text-align:center;
   }
   .q-remove{
     background:none;
@@ -372,6 +373,20 @@ function fmtTime(sec){
   return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
 }
 
+function parseTimeToSeconds(str){
+  str = (str||'').trim();
+  if(!str) return null;
+  if(str.includes(':')){
+    const parts = str.split(':').map(p=>parseInt(p,10));
+    if(parts.some(isNaN)) return null;
+    if(parts.length === 2) return parts[0]*60 + parts[1];
+    if(parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+    return null;
+  }
+  const n = parseInt(str,10);
+  return isNaN(n) ? null : n;
+}
+
 async function fetchTitle(videoId){
   try{
     const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
@@ -391,6 +406,7 @@ function loadData(){
       playlists = data.playlists || [];
       activeId = data.activeId;
     }else{
+      // 旧バージョン(単一プレイリスト)からの引き継ぎ
       const legacy = localStorage.getItem('mixtape_tracks');
       const legacyTracks = legacy ? JSON.parse(legacy) : [];
       const id = genId();
@@ -528,8 +544,8 @@ function render(){
       <div class="q-main" data-action="play">
         <div class="q-title">${escapeHtml(t.title)}</div>
         <div class="q-range">
-          <label>IN <input type="number" min="0" value="${t.start}" data-action="start"></label>
-          <label>OUT <input type="number" min="0" value="${t.end||''}" placeholder="末尾" data-action="end"></label>
+          <label>IN <input type="text" inputmode="numeric" value="${fmtTime(t.start)}" placeholder="00:00" data-action="start"></label>
+          <label>OUT <input type="text" inputmode="numeric" value="${t.end!=null?fmtTime(t.end):''}" placeholder="末尾" data-action="end"></label>
         </div>
       </div>
       <button class="q-remove" data-action="remove" title="削除">
@@ -581,9 +597,13 @@ el('queue').addEventListener('change', (e)=>{
   if(!track) return;
   const action = e.target.dataset.action;
   if(action === 'start'){
-    track.start = Math.max(0, parseInt(e.target.value)||0);
+    const sec = parseTimeToSeconds(e.target.value);
+    track.start = sec !== null ? Math.max(0, sec) : 0;
+    e.target.value = fmtTime(track.start);
   }else if(action === 'end'){
-    track.end = e.target.value === '' ? null : Math.max(0, parseInt(e.target.value)||0);
+    const sec = parseTimeToSeconds(e.target.value);
+    track.end = (sec !== null) ? Math.max(0, sec) : null;
+    e.target.value = track.end !== null ? fmtTime(track.end) : '';
   }
   saveData();
 });
@@ -635,6 +655,7 @@ function playNext(){
   if(order.length === 0) return;
   const wrapping = (currentPos + 1) >= order.length;
   if(wrapping && shuffleOn){
+    // 1周し終えたら、シャッフルを引き直して継続する
     rebuildOrder();
     currentPos = 0;
   }else{
