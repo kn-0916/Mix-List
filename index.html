@@ -93,6 +93,13 @@
     overflow:hidden;
     margin-bottom:18px;
   }
+  .screen-wrap{
+    transition:height .15s ease;
+  }
+  .screen-wrap.mv-off{
+    height:0;
+    overflow:hidden;
+  }
   .screen{
     position:relative;
     width:100%;
@@ -102,6 +109,12 @@
   #player{
     width:100%;
     height:100%;
+  }
+  #playerShield{
+    position:absolute;
+    inset:0;
+    background:transparent;
+    cursor:default;
   }
   .screen.empty{
     display:flex;
@@ -141,11 +154,17 @@
     background:var(--line);
     border-radius:2px;
     overflow:hidden;
+    cursor:pointer;
+    position:relative;
+    padding:8px 0;
+    margin:-8px 0;
+    background-clip:content-box;
   }
   .bar-fill{
-    height:100%;
+    height:3px;
     background:var(--amber);
     width:0%;
+    pointer-events:none;
   }
   .controls{
     display:flex;
@@ -169,12 +188,119 @@
   }
   .ctl-btn:hover{border-color:var(--amber-dim);}
   .ctl-btn.play{width:52px;height:40px;}
+  .ctl-btn.small{
+    width:auto;
+    height:32px;
+    padding:0 12px;
+    font-size:12px;
+    font-family:'Zen Kaku Gothic New',sans-serif;
+  }
   .ctl-btn.active{
     background:var(--amber);
     border-color:var(--amber);
     color:#1c1608;
   }
   .ctl-btn svg{width:16px;height:16px;fill:currentColor;}
+  .extra-controls{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-top:12px;
+  }
+  .extra-left{
+    display:flex;
+    gap:8px;
+  }
+  .volume-wrap{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    color:var(--sub);
+    flex:1;
+    max-width:130px;
+    justify-content:flex-end;
+  }
+  .volume-wrap input[type=range]{
+    width:80px;
+    accent-color:var(--amber);
+  }
+  .lyrics-panel{
+    margin-top:12px;
+    padding-top:12px;
+    border-top:1px solid var(--line);
+  }
+  .lyrics-panel.hidden{display:none;}
+  .lyrics-text{
+    white-space:pre-wrap;
+    font-size:13px;
+    line-height:1.7;
+    color:var(--text);
+    max-height:220px;
+    overflow-y:auto;
+    margin-bottom:10px;
+  }
+  .lyrics-text:empty::before{
+    content:'歌詞はまだ登録されていません';
+    color:var(--sub);
+  }
+  .lyrics-actions{
+    display:flex;
+    gap:8px;
+  }
+  .lyrics-actions button{
+    background:var(--surface2);
+    border:1px solid var(--line);
+    color:var(--text);
+    border-radius:6px;
+    padding:6px 12px;
+    font-size:12px;
+    cursor:pointer;
+    font-family:'Zen Kaku Gothic New',sans-serif;
+  }
+  .lyrics-actions button:hover{border-color:var(--amber-dim);}
+  .lyrics-editor{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:14px;
+    margin-bottom:18px;
+  }
+  .lyrics-editor.hidden{display:none;}
+  .lyrics-editor textarea{
+    width:100%;
+    min-height:160px;
+    background:var(--surface2);
+    border:1px solid var(--line);
+    color:var(--text);
+    border-radius:8px;
+    padding:10px;
+    font-size:13px;
+    font-family:'Zen Kaku Gothic New',sans-serif;
+    resize:vertical;
+  }
+  .lyrics-editor-actions{
+    display:flex;
+    gap:8px;
+    margin-top:10px;
+    justify-content:flex-end;
+  }
+  .lyrics-editor-actions button{
+    background:var(--amber);
+    border:none;
+    color:#1c1608;
+    font-weight:600;
+    border-radius:6px;
+    padding:8px 16px;
+    font-size:13px;
+    cursor:pointer;
+    font-family:'Zen Kaku Gothic New',sans-serif;
+  }
+  .lyrics-editor-actions button#btnCancelLyrics{
+    background:var(--surface2);
+    color:var(--text);
+    border:1px solid var(--line);
+  }
   .add-form{
     display:flex;
     gap:8px;
@@ -297,13 +423,18 @@
   </div>
 
   <div class="deck">
-    <div class="screen empty" id="screenEmpty">動画を追加すると再生できます</div>
-    <div id="player" style="display:none;"></div>
+    <div class="screen-wrap" id="screenWrap">
+      <div class="screen empty" id="screenEmpty">動画を追加すると再生できます</div>
+      <div class="screen" id="playerHolder" style="display:none;">
+        <div id="player"></div>
+        <div id="playerShield"></div>
+      </div>
+    </div>
     <div class="deck-body">
       <div class="track-info" id="trackInfo">再生待機中</div>
       <div class="counter-row">
         <span class="counter" id="counter">00:00 / 00:00</span>
-        <div class="bar"><div class="bar-fill" id="barFill"></div></div>
+        <div class="bar" id="seekBar"><div class="bar-fill" id="barFill"></div></div>
       </div>
       <div class="controls">
         <button class="ctl-btn" id="btnShuffle" title="シャッフル">
@@ -319,6 +450,31 @@
           <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6z"/></svg>
         </button>
       </div>
+      <div class="extra-controls">
+        <div class="extra-left">
+          <button class="ctl-btn small" id="btnMv" title="MV表示切替">MV</button>
+          <button class="ctl-btn small" id="btnLyrics" title="歌詞表示切替">詞</button>
+        </div>
+        <div class="volume-wrap">
+          <svg id="iconVol" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 10v4h4l5 5V5L7 10H3zm13.5 2A4.5 4.5 0 0 0 14 7.97v8.05A4.48 4.48 0 0 0 16.5 12z"/></svg>
+          <input type="range" id="volumeSlider" min="0" max="100" value="80">
+        </div>
+      </div>
+      <div class="lyrics-panel hidden" id="lyricsPanel">
+        <div class="lyrics-text" id="lyricsText"></div>
+        <div class="lyrics-actions">
+          <button type="button" id="btnEditLyrics">歌詞を編集</button>
+          <button type="button" id="btnSearchLyrics">歌詞を検索</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lyrics-editor hidden" id="lyricsEditor">
+    <textarea id="lyricsTextarea" placeholder="歌詞を貼り付け・入力"></textarea>
+    <div class="lyrics-editor-actions">
+      <button type="button" id="btnSaveLyrics">保存</button>
+      <button type="button" id="btnCancelLyrics">キャンセル</button>
     </div>
   </div>
 
@@ -341,6 +497,10 @@ let shuffleOn = false;
 let ytPlayer = null;
 let playerReady = false;
 let progressTimer = null;
+let mvOff = localStorage.getItem('mixlist_mv_off') === '1';
+let savedVolume = parseInt(localStorage.getItem('mixlist_volume'), 10);
+if(isNaN(savedVolume)) savedVolume = 80;
+let seeking = false;
 
 const el = id => document.getElementById(id);
 
@@ -448,7 +608,7 @@ function resetPlayerView(){
   currentPos = -1;
   if(ytPlayer){ try{ ytPlayer.stopVideo(); }catch(e){} }
   el('screenEmpty').style.display = 'flex';
-  el('player').style.display = 'none';
+  el('playerHolder').style.display = 'none';
   el('trackInfo').textContent = '再生待機中';
   el('counter').textContent = '00:00 / 00:00';
   el('barFill').style.width = '0%';
@@ -639,7 +799,7 @@ function playCurrent(){
   if(!track || !playerReady) return;
 
   el('screenEmpty').style.display = 'none';
-  el('player').style.display = 'block';
+  el('playerHolder').style.display = 'block';
 
   ytPlayer.loadVideoById({
     videoId: track.videoId,
@@ -648,7 +808,19 @@ function playCurrent(){
   });
   ytPlayer.playVideo();
   el('trackInfo').innerHTML = '再生中: <b>'+escapeHtml(track.title)+'</b>';
+  updateLyricsPanel();
   render();
+}
+
+function currentTrackObj(){
+  if(currentPos < 0 || currentPos >= order.length) return null;
+  const id = order[currentPos];
+  return tracks.find(t=>t.id===id) || null;
+}
+
+function updateLyricsPanel(){
+  const track = currentTrackObj();
+  el('lyricsText').textContent = track ? (track.lyrics || '') : '';
 }
 
 function playNext(){
@@ -726,6 +898,7 @@ function tickProgress(){
 
 function onPlayerReady(){
   playerReady = true;
+  ytPlayer.setVolume(savedVolume);
 }
 
 function onPlayerStateChange(ev){
@@ -743,7 +916,7 @@ window.onYouTubeIframeAPIReady = function(){
   ytPlayer = new YT.Player('player', {
     height: '100%',
     width: '100%',
-    playerVars: { rel: 0, playsinline: 1 },
+    playerVars: { rel: 0, playsinline: 1, controls: 0, disablekb: 1, modestbranding: 1 },
     events: {
       onReady: onPlayerReady,
       onStateChange: onPlayerStateChange
@@ -756,6 +929,91 @@ tag.src = 'https://www.youtube.com/iframe_api';
 document.body.appendChild(tag);
 
 progressTimer = setInterval(tickProgress, 500);
+
+// --- 音量 ---
+el('volumeSlider').value = savedVolume;
+el('volumeSlider').addEventListener('input', (e)=>{
+  const v = parseInt(e.target.value, 10) || 0;
+  savedVolume = v;
+  if(ytPlayer && playerReady) ytPlayer.setVolume(v);
+  localStorage.setItem('mixlist_volume', v);
+});
+
+// --- シークバー(YouTube純正のシークバーは使わず、こちらのオレンジのバーだけで操作する) ---
+function seekFromEvent(e){
+  const track = currentTrackObj();
+  if(!track || !ytPlayer || !playerReady) return;
+  const bar = el('seekBar');
+  const rect = bar.getBoundingClientRect();
+  const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+  let ratio = (clientX - rect.left) / rect.width;
+  ratio = Math.min(1, Math.max(0, ratio));
+  const dur = ytPlayer.getDuration() || 0;
+  const effEnd = track.end != null ? Math.min(track.end, dur) : dur;
+  const effStart = track.start || 0;
+  const span = Math.max(effEnd - effStart, 0.001);
+  const target = effStart + ratio * span;
+  ytPlayer.seekTo(target, true);
+  el('barFill').style.width = (ratio*100) + '%';
+}
+el('seekBar').addEventListener('mousedown', (e)=>{ seeking = true; seekFromEvent(e); });
+document.addEventListener('mousemove', (e)=>{ if(seeking) seekFromEvent(e); });
+document.addEventListener('mouseup', ()=>{ seeking = false; });
+el('seekBar').addEventListener('touchstart', (e)=>{ seeking = true; seekFromEvent(e); }, {passive:true});
+document.addEventListener('touchmove', (e)=>{ if(seeking) seekFromEvent(e); }, {passive:true});
+document.addEventListener('touchend', ()=>{ seeking = false; });
+
+// --- MV表示切替(音声はそのまま流れ続ける) ---
+function applyMvState(){
+  el('screenWrap').classList.toggle('mv-off', mvOff);
+  el('btnMv').classList.toggle('active', mvOff);
+}
+el('btnMv').addEventListener('click', ()=>{
+  mvOff = !mvOff;
+  localStorage.setItem('mixlist_mv_off', mvOff ? '1' : '0');
+  applyMvState();
+});
+applyMvState();
+
+// --- 歌詞表示切替 ---
+el('btnLyrics').addEventListener('click', ()=>{
+  const panel = el('lyricsPanel');
+  panel.classList.toggle('hidden');
+  const visible = !panel.classList.contains('hidden');
+  el('btnLyrics').classList.toggle('active', visible);
+  if(visible) updateLyricsPanel();
+});
+
+// --- 歌詞編集(自分で貼り付け・入力したものを保存/表示するだけで、自動取得はしていません) ---
+el('btnEditLyrics').addEventListener('click', ()=>{
+  const track = currentTrackObj();
+  if(!track){
+    alert('先に曲を再生(タップして選択)してください');
+    return;
+  }
+  el('lyricsTextarea').value = track.lyrics || '';
+  el('lyricsEditor').classList.remove('hidden');
+  el('lyricsEditor').scrollIntoView({behavior:'smooth', block:'center'});
+});
+el('btnCancelLyrics').addEventListener('click', ()=>{
+  el('lyricsEditor').classList.add('hidden');
+});
+el('btnSaveLyrics').addEventListener('click', ()=>{
+  const track = currentTrackObj();
+  if(!track) return;
+  track.lyrics = el('lyricsTextarea').value;
+  saveData();
+  el('lyricsEditor').classList.add('hidden');
+  updateLyricsPanel();
+});
+el('btnSearchLyrics').addEventListener('click', ()=>{
+  const track = currentTrackObj();
+  if(!track){
+    alert('先に曲を再生(タップして選択)してください');
+    return;
+  }
+  window.open('https://www.google.com/search?q=' + encodeURIComponent(track.title + ' 歌詞'), '_blank');
+});
 
 loadData();
 </script>
