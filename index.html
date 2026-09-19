@@ -397,6 +397,14 @@
     font-family:'Zen Kaku Gothic New',sans-serif;
     text-align:center;
   }
+  .q-duration{
+    font-size:11px;
+    color:var(--sub);
+    white-space:nowrap;
+  }
+  .q-range input.q-cutinput{
+    width:40px;
+  }
   .q-remove{
     background:none;
     border:none;
@@ -437,6 +445,7 @@
       <div class="screen empty" id="screenEmpty">動画を追加すると再生できます</div>
       <div class="screen" id="playerHolder" style="display:none;">
         <div id="player"></div>
+        <div id="durationProbe" style="position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none;"></div>
         <div id="playerShield"></div>
       </div>
     </div>
@@ -464,7 +473,7 @@
         <div class="extra-left">
           <button class="ctl-btn small" id="btnMv" title="MV表示切替">MV</button>
           <button class="ctl-btn small" id="btnLyrics" title="歌詞表示切替">詞</button>
-          <select id="rateSelect" title="再生速度(音程も一緒に変わります)">
+          <select id="rateSelect" title="再生速度">
             <option value="0.5">0.5x</option>
             <option value="0.75">0.75x</option>
             <option value="1" selected>1.0x</option>
@@ -586,7 +595,6 @@ function loadData(){
       playlists = data.playlists || [];
       activeId = data.activeId;
     }else{
-      // 旧バージョン(単一プレイリスト)からの引き継ぎ
       const legacy = localStorage.getItem('mixtape_tracks');
       const legacyTracks = legacy ? JSON.parse(legacy) : [];
       const id = genId();
@@ -608,6 +616,7 @@ function loadData(){
   rebuildOrder();
   renderPlaylistSelect();
   render();
+  tracks.forEach(queueDurationFetch);
 }
 
 function saveData(){
@@ -676,7 +685,7 @@ el('btnDeletePlaylist').addEventListener('click', ()=>{
     return;
   }
   const p = currentPlaylist();
-  if(!confirm(`「${p.name}」を削除します。よろしいですか？`)) return;
+  if(!confirm(`「${p.name}」を削除します`)) return;
   playlists = playlists.filter(x=>x.id!==p.id);
   activeId = playlists[0].id;
   tracks = currentPlaylist().tracks;
@@ -726,6 +735,10 @@ function render(){
         <div class="q-range">
           <label>IN <input type="text" inputmode="numeric" value="${fmtTime(t.start)}" placeholder="00:00" data-action="start"></label>
           <label>OUT <input type="text" inputmode="numeric" value="${t.end!=null?fmtTime(t.end):''}" placeholder="末尾" data-action="end"></label>
+        </div>
+        <div class="q-range">
+          <span class="q-duration">${t.duration ? ('長さ '+fmtTime(t.duration)) : '長さ取得中…'}</span>
+          <label>末尾<input type="text" inputmode="numeric" class="q-cutinput" value="" placeholder="0" data-action="endcut">秒カット</label>
         </div>
       </div>
       <button class="q-remove" data-action="remove" title="削除">
@@ -784,6 +797,22 @@ el('queue').addEventListener('change', (e)=>{
     const sec = parseTimeToSeconds(e.target.value);
     track.end = (sec !== null) ? Math.max(0, sec) : null;
     e.target.value = track.end !== null ? fmtTime(track.end) : '';
+  }else if(action === 'endcut'){
+    const cut = parseFloat(e.target.value);
+    if(!track.duration){
+      alert('動画の長さをまだ取得できていません。');
+      e.target.value = '';
+      return;
+    }
+    if(isNaN(cut) || cut <= 0){
+      e.target.value = '';
+    }else{
+      track.end = Math.max(0, Math.floor(track.duration - cut));
+      e.target.value = '';
+      saveData();
+      render();
+      return;
+    }
   }
   saveData();
 });
@@ -801,15 +830,17 @@ el('addForm').addEventListener('submit', async (e)=>{
   }
   el('addBtn').disabled = true;
   const title = await fetchTitle(videoId);
-  tracks.push({
+  const newTrack = {
     id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+Math.random(),
-    videoId, title, start: 0, end: null
-  });
+    videoId, title, start: 0, end: null, duration: null
+  };
+  tracks.push(newTrack);
   input.value = '';
   el('addBtn').disabled = false;
   rebuildOrder(order[currentPos]);
   saveData();
   render();
+  queueDurationFetch(newTrack);
 });
 
 function playCurrent(){
@@ -852,7 +883,6 @@ function playNext(){
   if(order.length === 0) return;
   const wrapping = (currentPos + 1) >= order.length;
   if(wrapping && shuffleOn){
-    // 1周し終えたら、シャッフルを引き直して継続する
     rebuildOrder();
     currentPos = 0;
   }else{
@@ -905,6 +935,10 @@ function tickProgress(){
   const dur = ytPlayer.getDuration() || 0;
   const cur = ytPlayer.getCurrentTime() || 0;
   const track = tracks.find(t => order[currentPos] === t.id);
+  if(track && !track.duration && dur > 0){
+    track.duration = Math.floor(dur);
+    saveData();
+  }
   const effEnd = track && track.end != null ? Math.min(track.end, dur) : dur;
   const effStart = track ? (track.start||0) : 0;
   const span = Math.max(effEnd - effStart, 0.001);
@@ -912,7 +946,6 @@ function tickProgress(){
   el('barFill').style.width = pct + '%';
   el('counter').textContent = fmtTime(cur - effStart) + ' / ' + fmtTime(span);
 
-  // YouTube側のendSecondsだけだと効かないことがあるので、ここでも終了秒数を監視する
   if(track && track.end != null && cur >= track.end - 0.15){
     const state = ytPlayer.getPlayerState();
     if(state === YT.PlayerState.PLAYING || state === YT.PlayerState.BUFFERING){
@@ -939,6 +972,48 @@ function onPlayerStateChange(ev){
   }
 }
 
+let probePlayer = null;
+let probeReady = false;
+let probeQueue = [];
+let probeBusy = false;
+let probeTimer = null;
+
+function queueDurationFetch(track){
+  if(!track || track.duration) return;
+  if(probeQueue.indexOf(track) === -1) probeQueue.push(track);
+  processProbeQueue();
+}
+
+function processProbeQueue(){
+  if(probeBusy || !probeReady || probeQueue.length === 0) return;
+  const track = probeQueue.shift();
+  if(!track || track.duration){ processProbeQueue(); return; }
+  probeBusy = true;
+  try{
+    probePlayer.mute();
+    probePlayer.loadVideoById(track.videoId);
+  }catch(e){ probeBusy = false; processProbeQueue(); return; }
+  let attempts = 0;
+  clearInterval(probeTimer);
+  probeTimer = setInterval(()=>{
+    attempts++;
+    let d = 0;
+    try{ d = probePlayer.getDuration ? probePlayer.getDuration() : 0; }catch(e){}
+    if(d && d > 0){
+      clearInterval(probeTimer);
+      track.duration = Math.floor(d);
+      saveData();
+      render();
+      probeBusy = false;
+      processProbeQueue();
+    }else if(attempts > 20){
+      clearInterval(probeTimer);
+      probeBusy = false;
+      processProbeQueue();
+    }
+  }, 400);
+}
+
 window.onYouTubeIframeAPIReady = function(){
   ytPlayer = new YT.Player('player', {
     height: '100%',
@@ -949,6 +1024,15 @@ window.onYouTubeIframeAPIReady = function(){
       onStateChange: onPlayerStateChange
     }
   });
+  probePlayer = new YT.Player('durationProbe', {
+    height: '1',
+    width: '1',
+    playerVars: { autoplay: 0, controls: 0, disablekb: 1, cc_load_policy: 0 },
+    events: {
+      onReady: function(){ probeReady = true; processProbeQueue(); },
+      onError: function(){ probeBusy = false; processProbeQueue(); }
+    }
+  });
 };
 
 const tag = document.createElement('script');
@@ -957,7 +1041,12 @@ document.body.appendChild(tag);
 
 progressTimer = setInterval(tickProgress, 500);
 
-// --- 音量 ---
+setInterval(()=>{
+  if(ytPlayer && playerReady){
+    try{ ytPlayer.unloadModule('captions'); }catch(e){}
+  }
+}, 3000);
+
 el('volumeSlider').value = savedVolume;
 el('volumeSlider').addEventListener('input', (e)=>{
   const v = parseInt(e.target.value, 10) || 0;
@@ -966,7 +1055,6 @@ el('volumeSlider').addEventListener('input', (e)=>{
   localStorage.setItem('mixlist_volume', v);
 });
 
-// --- 再生速度(音程も一緒に変わります。YouTube埋め込みではピッチだけの変更はできません) ---
 el('rateSelect').value = String(savedRate);
 el('rateSelect').addEventListener('change', (e)=>{
   const r = parseFloat(e.target.value) || 1;
@@ -977,7 +1065,6 @@ el('rateSelect').addEventListener('change', (e)=>{
   localStorage.setItem('mixlist_rate', r);
 });
 
-// --- シークバー(YouTube純正のシークバーは使わず、こちらのオレンジのバーだけで操作する) ---
 function seekFromEvent(e){
   const track = currentTrackObj();
   if(!track || !ytPlayer || !playerReady) return;
@@ -1001,7 +1088,6 @@ el('seekBar').addEventListener('touchstart', (e)=>{ seeking = true; seekFromEven
 document.addEventListener('touchmove', (e)=>{ if(seeking) seekFromEvent(e); }, {passive:true});
 document.addEventListener('touchend', ()=>{ seeking = false; });
 
-// --- MV表示切替(音声はそのまま流れ続ける) ---
 function applyMvState(){
   el('screenWrap').classList.toggle('mv-off', mvOff);
   el('btnMv').classList.toggle('active', mvOff);
@@ -1013,7 +1099,6 @@ el('btnMv').addEventListener('click', ()=>{
 });
 applyMvState();
 
-// --- 歌詞表示切替 ---
 el('btnLyrics').addEventListener('click', ()=>{
   const panel = el('lyricsPanel');
   panel.classList.toggle('hidden');
@@ -1022,7 +1107,6 @@ el('btnLyrics').addEventListener('click', ()=>{
   if(visible) updateLyricsPanel();
 });
 
-// --- 歌詞編集(自分で貼り付け・入力したものを保存/表示するだけで、自動取得はしていません) ---
 el('btnEditLyrics').addEventListener('click', ()=>{
   const track = currentTrackObj();
   if(!track){
