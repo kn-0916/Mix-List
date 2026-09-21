@@ -473,7 +473,7 @@
         <div class="extra-left">
           <button class="ctl-btn small" id="btnMv" title="MV表示切替">MV</button>
           <button class="ctl-btn small" id="btnLyrics" title="歌詞表示切替">詞</button>
-          <select id="rateSelect" title="再生速度">
+          <select id="rateSelect" title="再生速度(音程も一緒に変わります)">
             <option value="0.5">0.5x</option>
             <option value="0.75">0.75x</option>
             <option value="1" selected>1.0x</option>
@@ -524,6 +524,8 @@ let shuffleOn = false;
 let ytPlayer = null;
 let playerReady = false;
 let progressTimer = null;
+let playToken = 0;
+let lastAdvanceAt = 0;
 let mvOff = localStorage.getItem('mixlist_mv_off') === '1';
 let savedVolume = parseInt(localStorage.getItem('mixlist_volume'), 10);
 if(isNaN(savedVolume)) savedVolume = 80;
@@ -685,7 +687,7 @@ el('btnDeletePlaylist').addEventListener('click', ()=>{
     return;
   }
   const p = currentPlaylist();
-  if(!confirm(`「${p.name}」を削除します`)) return;
+  if(!confirm(`「${p.name}」を削除します。よろしいですか？`)) return;
   playlists = playlists.filter(x=>x.id!==p.id);
   activeId = playlists[0].id;
   tracks = currentPlaylist().tracks;
@@ -800,7 +802,7 @@ el('queue').addEventListener('change', (e)=>{
   }else if(action === 'endcut'){
     const cut = parseFloat(e.target.value);
     if(!track.duration){
-      alert('動画の長さをまだ取得できていません。');
+      alert('動画の長さをまだ取得できていません。少し待ってから再度お試しください。');
       e.target.value = '';
       return;
     }
@@ -852,6 +854,9 @@ function playCurrent(){
   el('screenEmpty').style.display = 'none';
   el('playerHolder').style.display = 'block';
 
+  pauseProbeForPlayback();
+
+  const loadedId = ++playToken;
   ytPlayer.loadVideoById({
     videoId: track.videoId,
     startSeconds: track.start || 0,
@@ -863,7 +868,16 @@ function playCurrent(){
   try{ ytPlayer.setOption('captions', 'track', {}); }catch(e){}
   setTimeout(()=>{ try{ ytPlayer.unloadModule('captions'); }catch(e){} }, 800);
   setTimeout(()=>{ try{ ytPlayer.unloadModule('captions'); }catch(e){} }, 2000);
-  el('trackInfo').innerHTML = '再生中: <b>'+escapeHtml(track.title)+'</b>';
+  [1200, 3000].forEach(delay=>{
+    setTimeout(()=>{
+      if(loadedId !== playToken || !ytPlayer) return;
+      const st = ytPlayer.getPlayerState();
+      if(st !== YT.PlayerState.PLAYING && st !== YT.PlayerState.BUFFERING && st !== YT.PlayerState.ENDED){
+        try{ ytPlayer.playVideo(); }catch(e){}
+      }
+    }, delay);
+  });
+  el('trackInfo').innerHTML = '読み込み中: <b>'+escapeHtml(track.title)+'</b>';
   updateLyricsPanel();
   render();
 }
@@ -879,7 +893,10 @@ function updateLyricsPanel(){
   el('lyricsText').textContent = track ? (track.lyrics || '') : '';
 }
 
-function playNext(){
+function playNext(force){
+  const now = Date.now();
+  if(!force && now - lastAdvanceAt < 1200) return;
+  lastAdvanceAt = now;
   if(order.length === 0) return;
   const wrapping = (currentPos + 1) >= order.length;
   if(wrapping && shuffleOn){
@@ -897,7 +914,7 @@ function playPrev(){
   playCurrent();
 }
 
-el('btnNext').addEventListener('click', playNext);
+el('btnNext').addEventListener('click', ()=>playNext(true));
 el('btnPrev').addEventListener('click', playPrev);
 
 el('btnShuffle').addEventListener('click', ()=>{
@@ -946,11 +963,13 @@ function tickProgress(){
   el('barFill').style.width = pct + '%';
   el('counter').textContent = fmtTime(cur - effStart) + ' / ' + fmtTime(span);
 
+  const state = ytPlayer.getPlayerState();
   if(track && track.end != null && cur >= track.end - 0.15){
-    const state = ytPlayer.getPlayerState();
     if(state === YT.PlayerState.PLAYING || state === YT.PlayerState.BUFFERING){
       playNext();
     }
+  }else if(dur > 0 && (dur - cur) < 0.4 && (state === YT.PlayerState.PLAYING || state === YT.PlayerState.ENDED)){
+    playNext();
   }
 }
 
@@ -964,6 +983,8 @@ function onPlayerReady(){
 function onPlayerStateChange(ev){
   if(ev.data === YT.PlayerState.PLAYING){
     updatePlayIcon(true);
+    const t = currentTrackObj();
+    if(t) el('trackInfo').innerHTML = '再生中: <b>'+escapeHtml(t.title)+'</b>';
   }else if(ev.data === YT.PlayerState.PAUSED){
     updatePlayIcon(false);
   }else if(ev.data === YT.PlayerState.ENDED){
@@ -977,6 +998,9 @@ let probeReady = false;
 let probeQueue = [];
 let probeBusy = false;
 let probeTimer = null;
+let probePaused = false;
+let probeResumeTimer = null;
+let currentProbeTrack = null;
 
 function queueDurationFetch(track){
   if(!track || track.duration) return;
@@ -985,14 +1009,15 @@ function queueDurationFetch(track){
 }
 
 function processProbeQueue(){
-  if(probeBusy || !probeReady || probeQueue.length === 0) return;
+  if(probePaused || probeBusy || !probeReady || probeQueue.length === 0) return;
   const track = probeQueue.shift();
   if(!track || track.duration){ processProbeQueue(); return; }
   probeBusy = true;
+  currentProbeTrack = track;
   try{
     probePlayer.mute();
     probePlayer.loadVideoById(track.videoId);
-  }catch(e){ probeBusy = false; processProbeQueue(); return; }
+  }catch(e){ probeBusy = false; currentProbeTrack = null; processProbeQueue(); return; }
   let attempts = 0;
   clearInterval(probeTimer);
   probeTimer = setInterval(()=>{
@@ -1005,13 +1030,31 @@ function processProbeQueue(){
       saveData();
       render();
       probeBusy = false;
+      currentProbeTrack = null;
       processProbeQueue();
     }else if(attempts > 20){
       clearInterval(probeTimer);
       probeBusy = false;
+      currentProbeTrack = null;
       processProbeQueue();
     }
   }, 400);
+}
+
+function pauseProbeForPlayback(){
+  probePaused = true;
+  if(probeTimer){ clearInterval(probeTimer); probeTimer = null; }
+  if(probeBusy){
+    if(currentProbeTrack) probeQueue.unshift(currentProbeTrack);
+    currentProbeTrack = null;
+    probeBusy = false;
+    try{ probePlayer && probePlayer.stopVideo && probePlayer.stopVideo(); }catch(e){}
+  }
+  clearTimeout(probeResumeTimer);
+  probeResumeTimer = setTimeout(()=>{
+    probePaused = false;
+    processProbeQueue();
+  }, 4000);
 }
 
 window.onYouTubeIframeAPIReady = function(){
